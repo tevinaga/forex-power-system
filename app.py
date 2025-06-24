@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 import numpy as np
 from collections import deque
 import logging
+from real_fundamental_engine import create_enhanced_webhook_handler
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -132,6 +133,11 @@ class SignalProcessor:
 
 # Initialize signal processor
 signal_processor = SignalProcessor()
+
+# Initialize fundamental engine
+print("🔥 Initializing Real Fundamental Analysis...")
+enhanced_webhook_handler, fundamental_engine = create_enhanced_webhook_handler()
+print("✅ Real Fundamental Analysis Ready!")
 
 @app.route('/')
 def dashboard():
@@ -283,18 +289,52 @@ def tradingview_webhook():
         
         logger.info(f"Received TradingView signal: {data}")
         
-        # Process signal with ML enhancement
-        enhanced_signal = signal_processor.enhance_signal(data)
-        
-        if enhanced_signal:
-            # Store signal
-            signals_history.append(enhanced_signal)
+        # Process signal with ML enhancement (your existing technical analysis)
+        technical_enhanced_signal = signal_processor.enhance_signal(data)
+
+        if technical_enhanced_signal:
+            # ✅ NEW: Apply REAL fundamental analysis enhancement
+            print(f"🔍 Applying real fundamental analysis to {technical_enhanced_signal['pair']}...")
+    
+            # Convert to format expected by fundamental engine
+            fundamental_input = {
+                'ticker': technical_enhanced_signal['pair'],
+                'action': technical_enhanced_signal['action'],
+                'confidence': technical_enhanced_signal['enhanced_confidence'],  # Use already enhanced confidence
+                'price': technical_enhanced_signal.get('price', data.get('price', 0)),
+                'timeframe': technical_enhanced_signal['timeframe'],
+                'timestamp': technical_enhanced_signal['timestamp']
+            }
+    
+            # Apply fundamental enhancement
+            fundamentally_enhanced_signal = enhanced_webhook_handler(fundamental_input)
+    
+            # Merge technical and fundamental enhancements
+            final_enhanced_signal = technical_enhanced_signal.copy()
+            final_enhanced_signal.update({
+                'technical_confidence': technical_enhanced_signal['enhanced_confidence'],
+                'fundamental_confidence': fundamentally_enhanced_signal.get('enhanced_confidence', technical_enhanced_signal['enhanced_confidence']),
+                'final_confidence': fundamentally_enhanced_signal.get('enhanced_confidence', technical_enhanced_signal['enhanced_confidence']),
+                'fundamental_factor': fundamentally_enhanced_signal.get('enhancement_factor', 1.0),
+                'fundamental_data': fundamentally_enhanced_signal.get('fundamental_data', {}),
+                'double_enhanced': True
+            })
+    
+            # Update the enhanced confidence to the final fundamental-enhanced value
+            final_enhanced_signal['enhanced_confidence'] = final_enhanced_signal['final_confidence']
+    
+            print(f"⚡ DOUBLE ENHANCED: Technical={final_enhanced_signal['technical_confidence']:.3f} → "
+                  f"Fundamental={final_enhanced_signal['final_confidence']:.3f} "
+                  f"(Factor: {final_enhanced_signal['fundamental_factor']:.3f})")
+    
+            # Store the double-enhanced signal
+            signals_history.append(final_enhanced_signal)
             
             # Update performance stats
             performance_stats['total_signals'] += 1
             performance_stats['signals_today'] += 1  # Would reset daily in production
             
-            if enhanced_signal['enhanced_confidence'] > 0.8:
+            if final_enhanced_signal['enhanced_confidence'] > 0.8:
                 performance_stats['high_confidence_signals'] += 1
             
             # Update average confidence
@@ -302,24 +342,28 @@ def tradingview_webhook():
             performance_stats['avg_confidence'] = sum(all_confidences) / len(all_confidences)
             
             # Track active pairs
-            performance_stats['active_pairs'].add(enhanced_signal['pair'])
+            performance_stats['active_pairs'].add(final_enhanced_signal['pair'])
             
             # Log successful processing
-            logger.info(f"Signal enhanced: {enhanced_signal['pair']} "
-                       f"confidence {enhanced_signal['original_confidence']:.3f} → "
-                       f"{enhanced_signal['enhanced_confidence']:.3f}")
+            logger.info(f"Signal enhanced: {final_enhanced_signal['pair']} "
+                       f"confidence {final_enhanced_signal['original_confidence']:.3f} → "
+                       f"{final_enhanced_signal['enhanced_confidence']:.3f}")
             
-            # Return enhanced signal data
+            # Return double-enhanced signal data
             response = {
-                'status': 'success',
-                'message': 'Signal processed and enhanced',
-                'original_confidence': enhanced_signal['original_confidence'],
-                'enhanced_confidence': enhanced_signal['enhanced_confidence'],
-                'improvement': enhanced_signal['confidence_improvement'],
-                'expected_return': enhanced_signal['expected_return'],
-                'signal_strength': enhanced_signal['signal_strength'],
-                'processing_time': datetime.now().isoformat()
-            }
+                 'status': 'success',
+                 'message': 'Signal processed with TECHNICAL + FUNDAMENTAL enhancement',
+                 'original_confidence': final_enhanced_signal['original_confidence'],
+                 'technical_confidence': final_enhanced_signal['technical_confidence'],
+                 'fundamental_confidence': final_enhanced_signal['fundamental_confidence'],
+                 'final_confidence': final_enhanced_signal['final_confidence'],
+                 'technical_improvement': final_enhanced_signal['confidence_improvement'],
+                 'fundamental_factor': final_enhanced_signal['fundamental_factor'],
+                 'expected_return': final_enhanced_signal['expected_return'],
+                 'signal_strength': final_enhanced_signal['signal_strength'],
+                 'fundamental_data_included': bool(final_enhanced_signal.get('fundamental_data')),
+                 'processing_time': datetime.now().isoformat()
+        }
             
             return jsonify(response)
         
