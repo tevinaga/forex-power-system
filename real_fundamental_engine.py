@@ -2,7 +2,9 @@
 # File: real_fundamental_engine.py
 
 import yfinance as yf
-import feedparser
+import xml.etree.ElementTree as ET
+import urllib.request
+import re
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -107,7 +109,7 @@ class RealFundamentalEngine:
             return {}
     
     def fetch_real_news_sentiment(self, currency_pair, hours_back=24):
-        """📰 Fetch REAL news sentiment from working RSS feeds"""
+        """📰 Fetch REAL news sentiment from RSS feeds - NO FEEDPARSER"""
         
         try:
             base_curr = currency_pair[:3]
@@ -115,40 +117,62 @@ class RealFundamentalEngine:
             all_articles = []
             sentiment_scores = []
             
+            # Simple RSS parser without feedparser
             for feed_name, feed_url in self.working_rss_feeds.items():
                 try:
-                    feed = feedparser.parse(feed_url)
+                    print(f"📡 Fetching {feed_name}...")
                     
-                    if hasattr(feed, 'entries'):
-                        for entry in feed.entries[:5]:  # Process 5 articles per feed
-                            try:
-                                # Get article text
-                                title = getattr(entry, 'title', '')
-                                description = getattr(entry, 'description', '')
-                                text = f"{title} {description}".upper()
+                    # Use urllib to fetch RSS
+                    with urllib.request.urlopen(feed_url, timeout=10) as response:
+                        xml_data = response.read().decode('utf-8')
+                    
+                    # Parse XML manually
+                    try:
+                        root = ET.fromstring(xml_data)
+                    except ET.ParseError:
+                        # Handle malformed XML
+                        xml_data = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;)', '&amp;', xml_data)
+                        root = ET.fromstring(xml_data)
+                    
+                    # Find RSS items
+                    items = root.findall('.//item')[:5]  # Get first 5 items
+                    
+                    for item in items:
+                        try:
+                            # Extract title and description
+                            title_elem = item.find('title')
+                            desc_elem = item.find('description')
+                            
+                            title = title_elem.text if title_elem is not None else ''
+                            description = desc_elem.text if desc_elem is not None else ''
+                            
+                            # Clean HTML tags from description
+                            description = re.sub(r'<[^>]+>', '', description)
+                            
+                            text = f"{title} {description}".upper()
+                            
+                            # Check if relevant to forex/currencies
+                            currency_keywords = [base_curr, quote_curr, 'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'NZD', 'CHF']
+                            forex_keywords = ['FED', 'ECB', 'BOE', 'BOJ', 'RATE', 'CURRENCY', 'DOLLAR', 'FOREX', 'CENTRAL BANK']
+                            
+                            relevant = any(keyword in text for keyword in currency_keywords + forex_keywords)
+                            
+                            if relevant and len(text.strip()) > 10:
+                                # Real sentiment analysis
+                                blob = TextBlob(text)
+                                sentiment = blob.sentiment.polarity
                                 
-                                # Check if relevant to forex/currencies
-                                currency_keywords = [base_curr, quote_curr, 'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'NZD', 'CHF']
-                                forex_keywords = ['FED', 'ECB', 'BOE', 'BOJ', 'RATE', 'CURRENCY', 'DOLLAR', 'FOREX', 'CENTRAL BANK']
+                                all_articles.append({
+                                    'title': title[:100],  # Truncate for logging
+                                    'sentiment': sentiment,
+                                    'source': feed_name,
+                                    'relevant_keywords': [kw for kw in currency_keywords + forex_keywords if kw in text][:3]
+                                })
+                                sentiment_scores.append(sentiment)
                                 
-                                relevant = any(keyword in text for keyword in currency_keywords + forex_keywords)
-                                
-                                if relevant:
-                                    # Real sentiment analysis
-                                    blob = TextBlob(text)
-                                    sentiment = blob.sentiment.polarity
-                                    
-                                    all_articles.append({
-                                        'title': title[:100],  # Truncate for logging
-                                        'sentiment': sentiment,
-                                        'source': feed_name,
-                                        'relevant_keywords': [kw for kw in currency_keywords + forex_keywords if kw in text]
-                                    })
-                                    sentiment_scores.append(sentiment)
-                                    
-                            except Exception as e:
-                                continue
-                                
+                        except Exception as e:
+                            continue
+                            
                 except Exception as e:
                     self.logger.warning(f"RSS feed {feed_name} error: {e}")
                     continue
@@ -164,7 +188,7 @@ class RealFundamentalEngine:
                     'classification': self.classify_sentiment(avg_sentiment),
                     'articles_analyzed': len(sentiment_scores),
                     'confidence': min(0.8, len(sentiment_scores) / 15),  # Max confidence at 15+ articles
-                    'articles': all_articles,
+                    'articles': all_articles[-10:],  # Keep last 10 articles
                     'timestamp': datetime.now().isoformat()
                 }
             else:
@@ -179,7 +203,14 @@ class RealFundamentalEngine:
                 
         except Exception as e:
             self.logger.error(f"News sentiment error: {e}")
-            return {}
+            return {
+                'sentiment_score': 0,
+                'classification': 'NEUTRAL', 
+                'articles_analyzed': 0,
+                'confidence': 0,
+                'articles': [],
+                'timestamp': datetime.now().isoformat()
+            }
     
     def classify_sentiment(self, score):
         """📊 Classify sentiment score into categories"""
